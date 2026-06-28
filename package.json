@@ -1,0 +1,39 @@
+{
+  "name": "macclippy",
+  "productName": "MacClippy",
+  "version": "1.0.0",
+  "description": "A nostalgic desktop paperclip for macOS that watches your screen with a local Gemma model (via Ollama), pops helpful tips, runs reminders, answers questions, optionally reacts to your webcam, and scoots away from your cursor.",
+  "main": "main.js",
+  "author": "MacClippy contributors",
+  "license": "MIT",
+  "homepage": "https://github.com/MikeyBeez/MacClippy",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MikeyBeez/MacClippy.git"
+  },
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --mac"
+  },
+  "devDependencies": {
+    "electron": "^31.3.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.macclippy.app",
+    "productName": "MacClippy",
+    "files": ["main.js", "preload.js", "config.json", "renderer/**"],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": ["dmg", "zip"],
+      "icon": "build/icon.png",
+      "extendInfo": {
+        "LSUIElement": 1,
+        "NSCameraUsageDescription": "MacClippy uses your camera only when you turn on webcam glances, to react with a friendly comment. Frames are processed locally and never leave your Mac.",
+        "NSMicrophoneUsageDescription": "Not used.",
+        "NSScreenCaptureUsageDescription": "MacClippy looks at your screen to offer helpful tips using a local AI model. Screenshots are processed locally and never leave your Mac."
+      }
+    }
+  }
+}

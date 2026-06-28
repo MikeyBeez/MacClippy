@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>MacClippy</title>
+<style>
+  :root { --bubble-bg: #fffbe6; --bubble-br: #e3d9a6; --ink: #2b2b2b; }
+  * { box-sizing: border-box; -webkit-user-select: none; user-select: none; }
+  html, body {
+    margin: 0; width: 300px; height: 320px;
+    background: transparent; overflow: hidden;
+    font-family: -apple-system, "Helvetica Neue", Arial, sans-serif;
+    cursor: default;
+  }
+  /* Whole stage is transparent and click-through by default; only #hot is interactive. */
+  #stage { position: relative; width: 300px; height: 320px; }
+
+  /* Speech bubble */
+  #bubble {
+    position: absolute; top: 6px; left: 8px; width: 284px;
+    background: var(--bubble-bg); border: 1.5px solid var(--bubble-br);
+    border-radius: 14px; padding: 10px 12px; color: var(--ink);
+    font-size: 13px; line-height: 1.35; box-shadow: 0 6px 18px rgba(0,0,0,.18);
+    opacity: 0; transform: translateY(-6px) scale(.98);
+    transition: opacity .18s ease, transform .18s ease; pointer-events: none;
+  }
+  #bubble.show { opacity: 1; transform: translateY(0) scale(1); }
+  #bubble:after {
+    content: ""; position: absolute; right: 56px; bottom: -9px;
+    border-width: 9px 9px 0 9px; border-style: solid;
+    border-color: var(--bubble-bg) transparent transparent transparent;
+    filter: drop-shadow(0 1px 0 var(--bubble-br));
+  }
+  #bubble .kind { font-weight: 700; font-size: 11px; letter-spacing:.3px; opacity:.6; text-transform: uppercase; margin-bottom: 2px; }
+
+  /* Chat input */
+  #chat { display: none; margin-top: 8px; }
+  #chat.show { display: flex; gap: 6px; }
+  #q { flex: 1; font-size: 13px; padding: 6px 8px; border: 1px solid var(--bubble-br);
+       border-radius: 8px; outline: none; background: #fff; color: var(--ink); }
+  #send { font-size: 13px; padding: 6px 10px; border: none; border-radius: 8px;
+          background: #4a7; color: #fff; cursor: pointer; }
+  #send:active { transform: translateY(1px); }
+
+  /* Clippy lives in the lower-right; this is the only clickable region */
+  #hot {
+    position: absolute; right: 30px; bottom: 6px; width: 150px; height: 232px;
+    pointer-events: auto; cursor: pointer;
+  }
+  #clip { width: 150px; height: 232px; display: block; filter: drop-shadow(0 4px 6px rgba(0,0,0,.25)); }
+  #avatarImg { display: none; width: 150px; height: 232px; object-fit: contain; filter: drop-shadow(0 4px 6px rgba(0,0,0,.25)); }
+  .wire { fill: none; stroke: #9aa0a6; stroke-width: 13; stroke-linecap: round; stroke-linejoin: round; }
+  .wire.hi { stroke: #c7ccd1; stroke-width: 5; }
+  .eyewhite { fill: #fff; stroke: #5b6066; stroke-width: 2.5; }
+  .pupil { fill: #1b1b1b; }
+  .brow { stroke: #5b6066; stroke-width: 4; stroke-linecap: round; }
+
+  @keyframes bobbing { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+  #hot.bob { animation: bobbing 3.2s ease-in-out infinite; }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <div id="bubble">
+      <div class="kind" id="bkind"></div>
+      <div id="btext"></div>
+      <div id="chat">
+        <input id="q" type="text" placeholder="Ask MacClippy…" autocomplete="off" />
+        <button id="send">Ask</button>
+      </div>
+    </div>
+
+    <div id="hot" class="bob" title="Click to ask. I scoot away when your cursor gets close!">
+      <img id="avatarImg" alt="avatar" />
+      <svg id="clip" viewBox="0 0 200 300" xmlns="http://www.w3.org/2000/svg">
+        <g transform="rotate(-4 100 150)">
+          <!-- main paperclip wire: two eyebrow humps over the eyes, then the long outer loop -->
+          <path class="wire" d="M62 102
+            C54 56 98 48 100 84
+            C102 48 146 56 138 102
+            L138 244
+            C138 282 62 282 62 244
+            L62 112" />
+          <!-- inner return wire — the nested second loop that makes it read as a paperclip -->
+          <path class="wire" d="M84 118 C79 95 121 95 116 118 L116 216" />
+          <!-- highlight along the brows for a metallic shine -->
+          <path class="wire hi" d="M62 102 C54 56 98 48 100 84 C102 48 146 56 138 102" />
+          <!-- big googly eyes sit just under the brow humps -->
+          <ellipse class="eyewhite" cx="86" cy="108" rx="15" ry="19" />
+          <ellipse class="eyewhite" cx="114" cy="108" rx="15" ry="19" />
+          <circle class="pupil" id="pupL" cx="86" cy="108" r="6" />
+          <circle class="pupil" id="pupR" cx="114" cy="108" r="6" />
+        </g>
+      </svg>
+    </div>
+  </div>
+
+<script>
+(function () {
+  const bubble = document.getElementById('bubble');
+  const bkind  = document.getElementById('bkind');
+  const btext  = document.getElementById('btext');
+  const chat   = document.getElementById('chat');
+  const q      = document.getElementById('q');
+  const send   = document.getElementById('send');
+  const hot    = document.getElementById('hot');
+  const pupL   = document.getElementById('pupL');
+  const pupR   = document.getElementById('pupR');
+
+  let hideTimer = null;
+  let thinking = false;
+  let builtin = true; // true = drawn paperclip (with eye tracking); false = custom image avatar
+
+  // ---- avatar: swap the paperclip for a custom image if configured ----
+  async function applyAvatar() {
+    try {
+      const cfg = await window.clippy.getConfig();
+      const a = cfg && cfg.avatar;
+      if (a && a.mode === 'image' && a.dataUrl) {
+        builtin = false;
+        document.getElementById('clip').style.display = 'none';
+        const img = document.getElementById('avatarImg');
+        img.src = a.dataUrl;
+        img.style.display = 'block';
+      }
+    } catch (e) { /* keep the default paperclip */ }
+  }
+  applyAvatar();
+
+  const QUIPS = [
+    "It looks like you're working hard. Want a hand?",
+    "Psst… I'm up here if you need me.",
+    "Tip: ⌘⇧4 lets you screenshot any region.",
+    "Tip: ⌘` cycles windows of the same app.",
+    "You've been focused a while — nice work.",
+    "It looks like you're writing something. Spell-check is your friend.",
+    "Need me to look at your screen? Click me and ask.",
+    "Remember to save. Past-you will thank present-you.",
+  ];
+
+  // ---- bubble ----
+  function showBubble(text, kind) {
+    btext.textContent = text;
+    bkind.textContent = kind && kind !== 'tip' ? kind : '';
+    bkind.style.display = bkind.textContent ? 'block' : 'none';
+    bubble.classList.add('show');
+    if (hideTimer) clearTimeout(hideTimer);
+    const ms = Math.min(14000, 4500 + text.length * 55);
+    if (!chat.classList.contains('show')) {
+      hideTimer = setTimeout(() => bubble.classList.remove('show'), ms);
+    }
+  }
+  function showThinking(on) {
+    thinking = on;
+    if (on) { bkind.style.display='none'; btext.textContent = 'thinking…'; bubble.classList.add('show'); if (hideTimer) clearTimeout(hideTimer); }
+  }
+
+  // ---- chat ----
+  function openChat() {
+    chat.classList.add('show');
+    bubble.classList.add('show');
+    if (!btext.textContent) btext.textContent = "What can I help with?";
+    if (hideTimer) clearTimeout(hideTimer);
+    window.clippy.setIgnoreMouse(false);
+    window.clippy.setChatState(true);
+    setTimeout(() => q.focus(), 30);
+  }
+  function closeChat() {
+    chat.classList.remove('show');
+    window.clippy.setChatState(false);
+  }
+  async function submitQuestion() {
+    const text = q.value.trim();
+    if (!text) return;
+    q.value = '';
+    showThinking(true);
+    try {
+      const res = await window.clippy.ask(text);
+      showThinking(false);
+      showBubble(res.answer, res.ok ? 'answer' : 'oops');
+    } catch (e) {
+      showThinking(false);
+      showBubble('Something went wrong asking Gemma.', 'oops');
+    }
+  }
+
+  send.addEventListener('click', submitQuestion);
+  q.addEventListener('keydown', (e) => { if (e.key === 'Enter') submitQuestion(); if (e.key === 'Escape') closeChat(); });
+
+  // Click Clippy -> toggle chat
+  hot.addEventListener('click', (e) => {
+    if (e.target.closest('#chat')) return;
+    if (chat.classList.contains('show')) closeChat();
+    else openChat();
+  });
+
+  // Interactive-region detection -> let the rest of the desktop receive clicks.
+  function interactiveOn()  { window.clippy.setIgnoreMouse(false); }
+  function interactiveOff() { if (!chat.classList.contains('show')) window.clippy.setIgnoreMouse(true); }
+  hot.addEventListener('mouseenter', interactiveOn);
+  hot.addEventListener('mouseleave', interactiveOff);
+  bubble.addEventListener('mouseenter', interactiveOn);
+  bubble.addEventListener('mouseleave', interactiveOff);
+
+  // ---- googly eyes: follow the cursor while it's over/near the window ----
+  function moveEyes(mx, my) {
+    if (!builtin) return;
+    [['86', pupL], ['114', pupR]].forEach(([baseCx, pup]) => {
+      const ex = parseFloat(baseCx), ey = 108;
+      const ang = Math.atan2(my - ey, mx - ex);
+      const r = 5;
+      pup.setAttribute('cx', (ex + Math.cos(ang) * r).toFixed(1));
+      pup.setAttribute('cy', (ey + Math.sin(ang) * r).toFixed(1));
+    });
+  }
+  window.addEventListener('mousemove', (e) => {
+    // map window-pixel coords into the SVG viewBox of the clip
+    const rect = document.getElementById('clip').getBoundingClientRect();
+    const sx = (e.clientX - rect.left) / rect.width * 200;
+    const sy = (e.clientY - rect.top) / rect.height * 300;
+    moveEyes(sx, sy);
+  });
+  // gentle idle eye drift
+  let t = 0;
+  setInterval(() => {
+    if (!builtin || document.hasFocus()) return;
+    t += 0.05;
+    moveEyes(100 + Math.cos(t) * 60, 108 + Math.sin(t * 0.7) * 20);
+  }, 90);
+
+  // ---- idle quips ----
+  function scheduleQuip() {
+    const lo = 6, hi = 14; // minutes (mirrors config defaults)
+    const mins = lo + Math.random() * (hi - lo);
+    setTimeout(() => {
+      if (!thinking && !chat.classList.contains('show')) {
+        showBubble(QUIPS[Math.floor(Math.random() * QUIPS.length)], 'tip');
+      }
+      scheduleQuip();
+    }, mins * 60 * 1000);
+  }
+  scheduleQuip();
+
+  // ---- webcam glance: grab ONE frame, then turn the camera back off ----
+  async function webcamGlance() {
+    let stream = null;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+      const video = document.createElement('video');
+      video.srcObject = stream; video.muted = true; video.playsInline = true;
+      await video.play();
+      await new Promise((r) => setTimeout(r, 400)); // let exposure settle
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 480;
+      canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+      const b64 = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
+      stream.getTracks().forEach((t) => t.stop()); // camera light goes off
+      stream = null;
+      showThinking(true);
+      const res = await window.clippy.webcamComment(b64);
+      showThinking(false);
+      if (res && res.text) showBubble(res.text, res.ok ? 'peek' : 'oops');
+    } catch (e) {
+      showThinking(false);
+      showBubble("I couldn't open the webcam — check camera permission.", 'oops');
+    } finally {
+      if (stream) stream.getTracks().forEach((t) => t.stop());
+    }
+  }
+
+  // ---- messages from the service ----
+  window.clippy.onWebcamGlance(() => webcamGlance());
+  window.clippy.onSpeak(({ text, kind }) => { if (!chat.classList.contains('show')) showBubble(text, kind); });
+  window.clippy.onThinking((v) => showThinking(v));
+  window.clippy.onOpenChat(() => openChat());
+  window.clippy.onToggleChat(() => {
+    if (chat.classList.contains('show')) closeChat();
+    else { window.clippy.requestSummon(); openChat(); }
+  });
+  window.clippy.onSummoned(() => { /* paused evasion handled in main; just greet */ });
+})();
+</script>
+</body>
+</html>
