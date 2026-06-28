@@ -223,6 +223,7 @@ function summon() {
   const wa = disp.workArea;
   const x = Math.round(wa.x + (wa.width - WIN_W) / 2);
   const y = Math.round(wa.y + (wa.height - WIN_H) / 2);
+  anchor = { x, y };
   if (!win.isVisible()) win.showInactive();
   win.setPosition(x, y, true);
   win.setIgnoreMouseEvents(false);
@@ -233,51 +234,56 @@ function summon() {
   rebuildTrayMenu();
 }
 
-// ---------- evasion: sit in corner, flee from cursor ----------
-function startEvasionLoop() {
-  const tick = () => {
-    if (!win || !win.isVisible()) return;
-    if (!evasionEnabled || summoned || pointerOverClippy || chatting) {
-      // Ease gently back toward the home corner when not actively fleeing.
-      easeHome();
-      return;
-    }
-    const cursor = screen.getCursorScreenPoint();
-    const b = win.getBounds();
-    const cx = b.x + b.width / 2;
-    const cy = b.y + b.height / 2;
-    const dx = cx - cursor.x;
-    const dy = cy - cursor.y;
-    const dist = Math.hypot(dx, dy);
+// ---------- evasion: dart to the farthest corner when the cursor approaches ----------
+const CLIP_DX = 195; // x offset of the visible clip's center inside the window
+const CLIP_DY = 198; // y offset of the visible clip's center inside the window
+let anchor = null;   // where Clippy wants to rest right now
 
-    if (dist < CFG.evasion.fleeRadiusPx) {
-      const len = dist || 1;
-      const step = CFG.evasion.pushStepPx;
-      let nx = b.x + (dx / len) * step;
-      let ny = b.y + (dy / len) * step;
-      const wa = screen.getDisplayNearestPoint(cursor).workArea;
-      nx = Math.max(wa.x, Math.min(wa.x + wa.width - b.width, nx));
-      ny = Math.max(wa.y, Math.min(wa.y + wa.height - b.height, ny));
-      win.setPosition(Math.round(nx), Math.round(ny));
-    } else {
-      easeHome();
-    }
-  };
-  timers.push(setInterval(tick, CFG.evasion.pollMs));
+function evasionCandidates(wa) {
+  const m = 24;
+  return [
+    { x: wa.x + m,                    y: wa.y + m },                     // top-left
+    { x: wa.x + wa.width - WIN_W - m, y: wa.y + m },                     // top-right
+    { x: wa.x + m,                    y: wa.y + wa.height - WIN_H - m },  // bottom-left
+    { x: wa.x + wa.width - WIN_W - m, y: wa.y + wa.height - WIN_H - m },  // bottom-right
+  ];
 }
 
-function easeHome() {
-  if (!win || !win.isVisible()) return;
-  if (summoned || chatting) return;
+function glideTo(target) {
+  if (!win || !target) return;
   const b = win.getBounds();
-  const disp = screen.getDisplayNearestPoint({ x: b.x + b.width / 2, y: b.y + b.height / 2 });
-  const home = cornerHome(disp.workArea);
-  const e = CFG.evasion.returnEasing;
-  const nx = b.x + (home.x - b.x) * e;
-  const ny = b.y + (home.y - b.y) * e;
+  const e = 0.3; // easing — higher = snappier dart
+  const nx = b.x + (target.x - b.x) * e;
+  const ny = b.y + (target.y - b.y) * e;
   if (Math.abs(nx - b.x) > 0.5 || Math.abs(ny - b.y) > 0.5) {
     win.setPosition(Math.round(nx), Math.round(ny));
   }
+}
+
+function startEvasionLoop() {
+  anchor = cornerHome(screen.getPrimaryDisplay().workArea);
+  const tick = () => {
+    if (!win || !win.isVisible()) return;
+    if (!evasionEnabled || summoned || chatting) return; // stay put when not evading
+    const cursor = screen.getCursorScreenPoint();
+    const wa = screen.getDisplayNearestPoint(cursor).workArea;
+    const b = win.getBounds();
+    const clipX = b.x + CLIP_DX;
+    const clipY = b.y + CLIP_DY;
+    const dist = Math.hypot(clipX - cursor.x, clipY - cursor.y);
+
+    if (dist < CFG.evasion.fleeRadiusPx) {
+      // cursor too close -> relocate to whichever corner is FARTHEST from the cursor (switch sides)
+      let best = anchor, bestD = -1;
+      for (const c of evasionCandidates(wa)) {
+        const d = Math.hypot((c.x + CLIP_DX) - cursor.x, (c.y + CLIP_DY) - cursor.y);
+        if (d > bestD) { bestD = d; best = c; }
+      }
+      anchor = best;
+    }
+    glideTo(anchor);
+  };
+  timers.push(setInterval(tick, CFG.evasion.pollMs));
 }
 
 // ---------- screen watching + Gemma ----------
