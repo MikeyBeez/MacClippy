@@ -120,6 +120,16 @@
   async function applyAvatar() {
     try {
       const cfg = await window.clippy.getConfig();
+      const s = (cfg && cfg.scale) || 1;
+      if (s !== 1) {
+        const stage = document.getElementById('stage');
+        stage.style.transformOrigin = '0 0';
+        stage.style.transform = 'scale(' + s + ')';
+        document.documentElement.style.width = (300 * s) + 'px';
+        document.documentElement.style.height = (320 * s) + 'px';
+        document.body.style.width = (300 * s) + 'px';
+        document.body.style.height = (320 * s) + 'px';
+      }
       const a = cfg && cfg.avatar;
       if (a && a.mode === 'image' && a.dataUrl) {
         builtin = false;

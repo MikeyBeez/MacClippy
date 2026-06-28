@@ -15,12 +15,16 @@ const {
 app.setName('MacClippy');
 const fs = require('fs');
 const path = require('path');
+const { execFile } = require('child_process');
 
 // ---------- config ----------
 const DEFAULTS = {
   avatar: { type: 'builtin', image: '', eyesTrackCursor: true },
+  appearance: { scale: 0.5 },
   startup: { openAtLogin: true },
   shortcuts: { toggleTalk: 'CommandOrControl+Shift+C' },
+  reachi: { enabled: true, commandPipe: '/tmp/reachi_command' },
+  speech: { speakAloud: false, voice: '' },
   ollama: { host: 'http://localhost:11434', model: 'gemma3:4b', timeoutMs: 45000 },
   watch: { enabled: true, intervalMinutes: 4, screenshotMaxWidth: 1280, screenshotMaxHeight: 800 },
   webcam: { enabled: false, intervalMinutes: 12 },
@@ -104,8 +108,10 @@ function useDefaultAvatar() {
 }
 
 // ---------- window geometry ----------
-const WIN_W = 300;
-const WIN_H = 320;
+const BASE_W = 300, BASE_H = 320;
+const SCALE = Math.max(0.25, Math.min(1.5, Number(CFG.appearance && CFG.appearance.scale) || 0.5));
+const WIN_W = Math.round(BASE_W * SCALE);
+const WIN_H = Math.round(BASE_H * SCALE);
 
 let win = null;
 let tray = null;
@@ -166,6 +172,7 @@ function createWindow() {
     win.showInactive(); // appear without stealing focus
     if (CFG.reminders.greetOnLaunch) {
       setTimeout(() => speak(greeting(), 'greeting'), 1200);
+      setTimeout(() => speak("Tip: press \u2318\u21e7C anytime to talk to me \u2014 it's a toggle, so press it again to close.", 'tip'), 6000);
     }
   });
 }
@@ -202,6 +209,18 @@ function rebuildTrayMenu() {
     { label: 'Open at login', type: 'checkbox', checked: !!CFG.startup.openAtLogin, click: (mi) => {
         CFG.startup.openAtLogin = mi.checked; saveConfig(); applyLoginItem();
       } },
+    { type: 'separator' },
+    { label: 'Use Reachi (jarvis) for answers', type: 'checkbox', checked: !!(CFG.reachi && CFG.reachi.enabled), click: (mi) => {
+        CFG.reachi.enabled = mi.checked; saveConfig();
+      } },
+    { label: 'Speak my tips aloud (macOS voice)', type: 'checkbox', checked: !!(CFG.speech && CFG.speech.speakAloud), click: (mi) => {
+        CFG.speech.speakAloud = mi.checked; saveConfig();
+      } },
+    { label: 'Size', submenu: [
+        { label: 'Small (50%)',  type: 'radio', checked: Math.abs(SCALE - 0.5) < 0.01,  click: () => setScale(0.5) },
+        { label: 'Medium (75%)', type: 'radio', checked: Math.abs(SCALE - 0.75) < 0.01, click: () => setScale(0.75) },
+        { label: 'Large (100%)', type: 'radio', checked: Math.abs(SCALE - 1) < 0.01,    click: () => setScale(1) },
+      ] },
     { label: 'Edit settings (config.json)', click: () => shell.openPath(CONFIG_PATH) },
     { type: 'separator' },
     { label: 'Quit MacClippy', click: () => app.quit() },
@@ -238,8 +257,8 @@ function summon() {
 }
 
 // ---------- evasion: dart to the farthest corner when the cursor approaches ----------
-const CLIP_DX = 195; // x offset of the visible clip's center inside the window
-const CLIP_DY = 198; // y offset of the visible clip's center inside the window
+const CLIP_DX = Math.round(195 * SCALE); // x offset of the visible clip's center inside the window
+const CLIP_DY = Math.round(198 * SCALE); // y offset of the visible clip's center inside the window
 let anchor = null;   // where Clippy wants to rest right now
 
 function evasionCandidates(wa) {
@@ -399,6 +418,11 @@ function applyLoginItem() {
   }
 }
 
+function setScale(scale) {
+  CFG.appearance.scale = scale; saveConfig();
+  app.relaunch(); app.exit(0);
+}
+
 // ---------- reminders ----------
 function greeting() {
   const h = new Date().getHours();
@@ -439,6 +463,27 @@ function startPomodoro() {
   timers.push(setTimeout(cycle, p.workMinutes * 60 * 1000));
 }
 
+// ---------- Reachi (a.k.a. "jarvis") bridge + macOS speech ----------
+let sayProc = null;
+function forwardToReachi(text) {
+  const pipe = (CFG.reachi && CFG.reachi.commandPipe) || '/tmp/reachi_command';
+  return new Promise((resolve) => {
+    execFile('bash', ['-c', 'echo "$REACHI_TEXT" > "$REACHI_PIPE"'],
+      { env: { ...process.env, REACHI_TEXT: String(text), REACHI_PIPE: pipe }, timeout: 4000 },
+      (err) => resolve(!err));
+  });
+}
+function sayAloud(text) {
+  if (!(CFG.speech && CFG.speech.speakAloud) || !text) return;
+  try {
+    if (sayProc) { try { sayProc.kill(); } catch (e) {} }
+    const args = [];
+    if (CFG.speech.voice) args.push('-v', CFG.speech.voice);
+    args.push(String(text));
+    sayProc = execFile('say', args, () => {});
+  } catch (e) {}
+}
+
 // ---------- renderer messaging ----------
 function sendToRenderer(channel, payload) {
   if (win && !win.isDestroyed() && win.webContents) {
@@ -449,10 +494,18 @@ function speak(text, kind = 'tip') {
   if (!win) return;
   if (!win.isVisible()) win.showInactive();
   sendToRenderer('speak', { text, kind });
+  sayAloud(text);
 }
 
 // ---------- IPC from renderer ----------
 ipcMain.handle('ask', async (_evt, question) => {
+  // Prefer Reachi ("jarvis"): forward to its command pipe; Reachi runs the brain and speaks the reply.
+  if (CFG.reachi && CFG.reachi.enabled) {
+    const ok = await forwardToReachi(question);
+    return ok
+      ? { ok: true, answer: '🎙️ Sent to Reachi — listen for the reply.' }
+      : { ok: false, answer: "Reachi isn't listening (command pipe not accepting). Is its daemon running?" };
+  }
   try {
     let images = [];
     try { const s = await captureScreenBase64(); if (s) images = [s]; } catch (_) {}
@@ -477,7 +530,7 @@ ipcMain.on('look-now', () => runWatchOnce(true));
 
 ipcMain.on('request-summon', () => summon());
 
-ipcMain.handle('get-config', () => ({ avatar: resolveAvatar() }));
+ipcMain.handle('get-config', () => ({ avatar: resolveAvatar(), scale: SCALE }));
 
 ipcMain.handle('webcam-comment', async (_evt, b64) => {
   try {

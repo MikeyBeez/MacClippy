@@ -1,51 +1,14 @@
 {
-  "avatar": {
-    "type": "builtin",
-    "image": "",
-    "eyesTrackCursor": true
-  },
-  "startup": {
-    "openAtLogin": true
-  },
-  "shortcuts": {
-    "toggleTalk": "CommandOrControl+Shift+C"
-  },
-  "ollama": {
-    "host": "http://localhost:11434",
-    "model": "gemma4:latest",
-    "timeoutMs": 45000
-  },
-  "watch": {
-    "enabled": true,
-    "intervalMinutes": 4,
-    "screenshotMaxWidth": 1280,
-    "screenshotMaxHeight": 800
-  },
-  "webcam": {
-    "enabled": false,
-    "intervalMinutes": 12
-  },
-  "evasion": {
-    "enabled": true,
-    "homeCorner": "top-right",
-    "fleeRadiusPx": 160,
-    "pushStepPx": 36,
-    "returnEasing": 0.08,
-    "pollMs": 110
-  },
-  "reminders": {
-    "greetOnLaunch": true,
-    "hydrationMinutes": 50,
-    "postureMinutes": 30,
-    "pomodoro": {
-      "enabled": false,
-      "workMinutes": 25,
-      "breakMinutes": 5
-    }
-  },
-  "idleQuips": {
-    "enabled": true,
-    "everyMinutesMin": 6,
-    "everyMinutesMax": 14
-  }
+  "avatar": { "type": "builtin", "image": "", "eyesTrackCursor": true },
+  "appearance": { "scale": 0.5 },
+  "startup": { "openAtLogin": true },
+  "shortcuts": { "toggleTalk": "CommandOrControl+Shift+C" },
+  "reachi": { "enabled": true, "commandPipe": "/tmp/reachi_command" },
+  "speech": { "speakAloud": false, "voice": "" },
+  "ollama": { "host": "http://localhost:11434", "model": "gemma4:latest", "timeoutMs": 45000 },
+  "watch": { "enabled": true, "intervalMinutes": 4, "screenshotMaxWidth": 1280, "screenshotMaxHeight": 800 },
+  "webcam": { "enabled": false, "intervalMinutes": 12 },
+  "evasion": { "enabled": true, "homeCorner": "top-right", "fleeRadiusPx": 160, "pushStepPx": 36, "returnEasing": 0.08, "pollMs": 110 },
+  "reminders": { "greetOnLaunch": true, "hydrationMinutes": 50, "postureMinutes": 30, "pomodoro": { "enabled": false, "workMinutes": 25, "breakMinutes": 5 } },
+  "idleQuips": { "enabled": true, "everyMinutesMin": 6, "everyMinutesMax": 14 }
 }
