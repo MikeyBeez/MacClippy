@@ -41,6 +41,9 @@
   #send { font-size: 13px; padding: 6px 10px; border: none; border-radius: 8px;
           background: #4a7; color: #fff; cursor: pointer; }
   #send:active { transform: translateY(1px); }
+  #mic { font-size: 13px; padding: 6px 8px; border: 1px solid var(--bubble-br); border-radius: 8px;
+         background: #fff; cursor: pointer; }
+  #mic.on { background: #f7c948; border-color: #e0a800; }
 
   /* Clippy lives in the lower-right; this is the only clickable region */
   #hot {
@@ -65,7 +68,8 @@
       <div class="kind" id="bkind"></div>
       <div id="btext"></div>
       <div id="chat">
-        <input id="q" type="text" placeholder="Ask MacClippy…" autocomplete="off" />
+        <input id="q" type="text" placeholder="Ask or speak to MacClippy…" autocomplete="off" />
+        <button id="mic" title="Speak (toggle)">🎤</button>
         <button id="send">Ask</button>
       </div>
     </div>
@@ -103,6 +107,7 @@
   const chat   = document.getElementById('chat');
   const q      = document.getElementById('q');
   const send   = document.getElementById('send');
+  const mic    = document.getElementById('mic');
   const hot    = document.getElementById('hot');
   const pupL   = document.getElementById('pupL');
   const pupR   = document.getElementById('pupR');
@@ -163,13 +168,15 @@
     if (hideTimer) clearTimeout(hideTimer);
     window.clippy.setIgnoreMouse(false);
     window.clippy.setChatState(true);
-    setTimeout(() => q.focus(), 30);
+    setTimeout(() => { q.focus(); startListening(); }, 30);
   }
   function closeChat() {
     chat.classList.remove('show');
+    stopListening();
     window.clippy.setChatState(false);
   }
   async function submitQuestion() {
+    stopListening();
     const text = q.value.trim();
     if (!text) return;
     q.value = '';
@@ -268,6 +275,38 @@
       if (stream) stream.getTracks().forEach((t) => t.stop());
     }
   }
+
+  // ---- voice input: Web Speech API; auto-listens while the chat is open ----
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let rec = null, listening = false, micHinted = false;
+  function startListening() {
+    if (listening) return;
+    if (!SR) {
+      if (!micHinted) { micHinted = true; btext.textContent = "Type here — or use macOS Dictation to speak into this box."; }
+      return;
+    }
+    try {
+      rec = new SR();
+      rec.continuous = true; rec.interimResults = true; rec.lang = 'en-US';
+      const base = q.value ? q.value.trim() + ' ' : '';
+      rec.onresult = (e) => {
+        let t = '';
+        for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
+        q.value = (base + t).replace(/\s+/g, ' ').trimStart();
+      };
+      rec.onerror = (e) => {
+        listening = false; mic.classList.remove('on');
+        if (e.error !== 'no-speech' && e.error !== 'aborted') {
+          btext.textContent = "Voice not available here (" + e.error + ") — type, or use macOS Dictation.";
+        }
+      };
+      rec.onend = () => { listening = false; mic.classList.remove('on'); };
+      rec.start();
+      listening = true; mic.classList.add('on');
+    } catch (err) { listening = false; mic.classList.remove('on'); }
+  }
+  function stopListening() { try { if (rec) rec.stop(); } catch (e) {} rec = null; listening = false; mic.classList.remove('on'); }
+  mic.addEventListener('click', () => { listening ? stopListening() : startListening(); });
 
   // ---- messages from the service ----
   window.clippy.onWebcamGlance(() => webcamGlance());

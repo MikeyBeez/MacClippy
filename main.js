@@ -224,10 +224,13 @@ function summon() {
   const x = Math.round(wa.x + (wa.width - WIN_W) / 2);
   const y = Math.round(wa.y + (wa.height - WIN_H) / 2);
   anchor = { x, y };
-  if (!win.isVisible()) win.showInactive();
   win.setPosition(x, y, true);
   win.setIgnoreMouseEvents(false);
+  // Accessory (menu-bar) apps must actively activate to receive keystrokes.
+  if (process.platform === 'darwin') app.focus({ steal: true });
+  win.show();
   win.focus();
+  win.webContents.focus();
   sendToRenderer('summoned');
   // Resume evasion after a grace period.
   setTimeout(() => { summoned = false; }, 8000);
