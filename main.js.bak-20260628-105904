@@ -23,7 +23,7 @@ const DEFAULTS = {
   appearance: { scale: 0.5 },
   startup: { openAtLogin: true },
   shortcuts: { toggleTalk: 'CommandOrControl+Shift+C' },
-  reachi: { enabled: true, mode: 'api', apiUrl: 'http://127.0.0.1:8765', timeoutMs: 30000, commandPipe: '/tmp/reachi_command', manageMode: false, dir: '', restartCmd: './restart_daemon.sh', envFile: '.env' },
+  reachi: { enabled: true, commandPipe: '/tmp/reachi_command', manageMode: false, dir: '', restartCmd: './restart_daemon.sh', envFile: '.env' },
   speech: { speakAloud: false, voice: '' },
   ollama: { host: 'http://localhost:11434', model: 'gemma3:4b', timeoutMs: 45000 },
   watch: { enabled: true, intervalMinutes: 4, screenshotMaxWidth: 1280, screenshotMaxHeight: 800 },
@@ -319,26 +319,6 @@ async function captureScreenBase64() {
   return img.toPNG().toString('base64');
 }
 
-async function callReachi(question) {
-  // Text backend: POST to the reachi/Jarvis HTTP API and return its answer.
-  const base = (CFG.reachi && CFG.reachi.apiUrl) || 'http://127.0.0.1:8765';
-  const ctrl = new AbortController();
-  const to = setTimeout(() => ctrl.abort(), (CFG.reachi && CFG.reachi.timeoutMs) || 30000);
-  try {
-    const res = await fetch(`${base}/ask`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: question }),
-      signal: ctrl.signal,
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || data.error) throw new Error(data.detail || data.error || `HTTP ${res.status}`);
-    return (data.response || '').trim();
-  } finally {
-    clearTimeout(to);
-  }
-}
-
 async function callOllama(prompt, imagesB64) {
   const url = `${CFG.ollama.host}/api/generate`;
   const body = { model: CFG.ollama.model, prompt, stream: false };
@@ -559,18 +539,8 @@ function speak(text, kind = 'tip') {
 
 // ---------- IPC from renderer ----------
 ipcMain.handle('ask', async (_evt, question) => {
-  const _r = CFG.reachi || {};
-  // Reachi as a TEXT backend ("jarvis"): HTTP API returns the answer to show in the bubble (fast).
-  if (_r.enabled && (_r.mode || 'api') === 'api') {
-    try {
-      const answer = await callReachi(question);
-      if (answer) return { ok: true, answer };
-    } catch (e) {
-      console.warn('[MacClippy] Reachi API unreachable, falling back:', e.message);
-    }
-  }
-  // Reachi via command pipe: Reachi runs the brain and SPEAKS the reply (no text returned).
-  if (_r.enabled && _r.mode === 'pipe') {
+  // Prefer Reachi ("jarvis"): forward to its command pipe; Reachi runs the brain and speaks the reply.
+  if (CFG.reachi && CFG.reachi.enabled) {
     const ok = await forwardToReachi(question);
     return ok
       ? { ok: true, answer: '🎙️ Sent to Reachi — listen for the reply.' }
