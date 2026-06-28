@@ -116,3 +116,15 @@ MacClippy/
 ├── LICENSE            # MIT
 └── README.md
 ```
+
+## Talking to Reachi ("jarvis")
+
+MacClippy forwards whatever you type or dictate to the local **Reachi** assistant via its command pipe (`/tmp/reachi_command`). Reachi runs the brain and **speaks the reply itself**, so the backend model can change (Mac mini, pop's GPU, etc.) without touching MacClippy.
+
+Reachi must be in `voice_control` input mode to read the pipe. Drop a gitignored `config.local.json` next to `config.json` to let MacClippy switch Reachi to `voice_control` on launch and restore your previous mode on quit:
+
+```json
+{ "reachi": { "manageMode": true, "dir": "/path/to/reachi", "restartCmd": "./restart_daemon.sh", "envFile": ".env" } }
+```
+
+Toggle it off in the menu bar (📎 → "Use Reachi (jarvis) for answers") to fall back to the local Gemma model instead.

@@ -15,7 +15,7 @@ const {
 app.setName('MacClippy');
 const fs = require('fs');
 const path = require('path');
-const { execFile } = require('child_process');
+const { execFile, execFileSync } = require('child_process');
 
 // ---------- config ----------
 const DEFAULTS = {
@@ -23,7 +23,7 @@ const DEFAULTS = {
   appearance: { scale: 0.5 },
   startup: { openAtLogin: true },
   shortcuts: { toggleTalk: 'CommandOrControl+Shift+C' },
-  reachi: { enabled: true, commandPipe: '/tmp/reachi_command' },
+  reachi: { enabled: true, commandPipe: '/tmp/reachi_command', manageMode: false, dir: '', restartCmd: './restart_daemon.sh', envFile: '.env' },
   speech: { speakAloud: false, voice: '' },
   ollama: { host: 'http://localhost:11434', model: 'gemma3:4b', timeoutMs: 45000 },
   watch: { enabled: true, intervalMinutes: 4, screenshotMaxWidth: 1280, screenshotMaxHeight: 800 },
@@ -34,13 +34,12 @@ const DEFAULTS = {
 };
 
 function loadConfig() {
-  try {
-    const raw = fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8');
-    return deepMerge(DEFAULTS, JSON.parse(raw));
-  } catch (e) {
-    console.warn('[MacClippy] config.json not found or invalid, using defaults:', e.message);
-    return DEFAULTS;
-  }
+  let cfg = DEFAULTS;
+  try { cfg = deepMerge(cfg, JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'))); }
+  catch (e) { console.warn('[MacClippy] config.json missing/invalid, using defaults:', e.message); }
+  try { cfg = deepMerge(cfg, JSON.parse(fs.readFileSync(path.join(__dirname, 'config.local.json'), 'utf8'))); }
+  catch (e) { /* optional machine-specific overrides */ }
+  return cfg;
 }
 function deepMerge(base, over) {
   const out = Array.isArray(base) ? base.slice() : { ...base };
@@ -484,6 +483,47 @@ function sayAloud(text) {
   } catch (e) {}
 }
 
+// ---------- Reachi input-mode management (flip to voice_control while MacClippy runs) ----------
+let reachiPrevMode = null;
+function reachiEnvPath() { return path.join(CFG.reachi.dir || '', CFG.reachi.envFile || '.env'); }
+function readReachiInputMode() {
+  try {
+    const m = fs.readFileSync(reachiEnvPath(), 'utf8').match(/^INPUT_MODE=(.*)$/m);
+    return m ? m[1].trim() : null;
+  } catch (e) { return null; }
+}
+function writeReachiInputMode(mode) {
+  try {
+    const p = reachiEnvPath();
+    let txt = fs.readFileSync(p, 'utf8');
+    if (/^INPUT_MODE=.*$/m.test(txt)) txt = txt.replace(/^INPUT_MODE=.*$/m, 'INPUT_MODE=' + mode);
+    else txt = txt.replace(/\s*$/, '\n') + 'INPUT_MODE=' + mode + '\n';
+    fs.writeFileSync(p, txt);
+    return true;
+  } catch (e) { console.warn('[MacClippy] reachi .env write failed:', e.message); return false; }
+}
+function restartReachi(sync) {
+  const cmd = CFG.reachi.restartCmd || './restart_daemon.sh';
+  try {
+    if (sync) execFileSync('bash', [cmd], { cwd: CFG.reachi.dir, timeout: 15000, stdio: 'ignore' });
+    else execFile('bash', [cmd], { cwd: CFG.reachi.dir, timeout: 15000 }, () => {});
+  } catch (e) { console.warn('[MacClippy] reachi restart failed:', e.message); }
+}
+function enableReachiVoiceControl() {
+  if (!CFG.reachi.manageMode || !CFG.reachi.dir) return;
+  const cur = readReachiInputMode();
+  reachiPrevMode = cur;
+  if (cur && cur !== 'voice_control') {
+    if (writeReachiInputMode('voice_control')) restartReachi(false);
+  }
+}
+function restoreReachiMode() {
+  if (!CFG.reachi.manageMode || !CFG.reachi.dir) return;
+  if (reachiPrevMode && reachiPrevMode !== 'voice_control') {
+    if (writeReachiInputMode(reachiPrevMode)) restartReachi(true);
+  }
+}
+
 // ---------- renderer messaging ----------
 function sendToRenderer(channel, payload) {
   if (win && !win.isDestroyed() && win.webContents) {
@@ -552,6 +592,7 @@ app.whenReady().then(() => {
   });
 
   applyLoginItem();
+  enableReachiVoiceControl();
 
   // Friendly heads-up if Screen Recording permission isn't granted yet.
   if (process.platform === 'darwin' && systemPreferences.getMediaAccessStatus) {
@@ -578,5 +619,6 @@ app.on('window-all-closed', (e) => {
 });
 
 app.on('before-quit', () => {
+  restoreReachiMode();
   timers.forEach((t) => { clearInterval(t); clearTimeout(t); });
 });
